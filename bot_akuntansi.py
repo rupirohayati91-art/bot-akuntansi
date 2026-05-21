@@ -273,6 +273,37 @@ async def simpan_keluar_msg(message, context, uid, foto_id):
         parse_mode="Markdown", reply_markup=kb()
     )
 
+# ─── /help ───────────────────────────────────────────────────────────────────
+async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "📖 *DAFTAR PERINTAH BOT AKUNTANSI*\n\n"
+        "💳 *SALDO*\n"
+        "`/addbal 50000` — tambah saldo 50 ribu\n"
+        "`/addbal 50k` — tambah saldo 50 ribu\n"
+        "`/saldo` — cek saldo sekarang\n\n"
+        "💸 *PENGELUARAN*\n"
+        "`/keluar 20000 beli sayur` — catat pengeluaran\n"
+        "`/keluar 20k beli sayur` — catat pengeluaran\n\n"
+        "📊 *LAPORAN*\n"
+        "`/hari` — transaksi hari ini\n"
+        "`/bulanan` — laporan per bulan\n"
+        "`/semua` — semua transaksi (20 terbaru)\n\n"
+        "⚙️ *LAINNYA*\n"
+        "`/reset` — reset semua data\n"
+        "`/start` — tampilkan menu utama\n"
+        "`/help` — tampilkan bantuan ini\n\n"
+        "📱 *MENU TOMBOL*\n"
+        "• 💰 Saldo\n"
+        "• ➕ Tambah Saldo\n"
+        "• 🛒 Catat Pengeluaran\n"
+        "• 🖼️ Bukti Foto\n"
+        "• 📋 Transaksi Hari Ini\n"
+        "• 📅 Bulanan\n"
+        "• 📊 Semua Transaksi\n"
+        "• 🔄 Reset Data",
+        parse_mode="Markdown"
+    )
+
 # ─── /saldo ───────────────────────────────────────────────────────────────────
 async def cek_saldo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
@@ -444,6 +475,7 @@ def main():
     app = Application.builder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("saldo", cek_saldo))
     app.add_handler(CommandHandler("addbal", addbal))
     app.add_handler(CommandHandler("keluar", keluar_cmd))
