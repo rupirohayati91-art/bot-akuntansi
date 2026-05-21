@@ -50,7 +50,7 @@ def waktu_sekarang():
     hari = ["Senin","Selasa","Rabu","Kamis","Jumat","Sabtu","Minggu"]
     return f"{hari[now.weekday()]}, {now.strftime('%d/%m/%Y %H:%M')}"
 
-SET_MODAL, INPUT_KET, INPUT_JML, INPUT_FOTO, KONFIRM_RESET = range(5)
+SET_MODAL, INPUT_KET, INPUT_JML, INPUT_FOTO, KONFIRM_RESET, KELUAR_FOTO = range(6)
 
 # ─── Keyboard ─────────────────────────────────────────────────────────────────
 def kb():
@@ -143,7 +143,7 @@ async def proses_tambah_saldo(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
     return ConversationHandler.END
 
-# ─── /keluar — Catat Pengeluaran via Command ──────────────────────────────────
+# ─── /keluar — Catat Pengeluaran via Command (dengan opsi foto) ───────────────
 async def keluar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     user = get_user(uid)
@@ -154,36 +154,50 @@ async def keluar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "🛒 *Catat Pengeluaran*\n\nFormat: `/keluar 20000 beli sayur`\nAtau: `/keluar 20k beli sayur`",
             parse_mode="Markdown"
         )
-        return
+        return ConversationHandler.END
 
     jumlah = parse_nominal(args[0])
     keterangan = " ".join(args[1:]) if len(args) > 1 else "Pengeluaran"
 
     if jumlah <= 0:
         await update.message.reply_text("❌ Nominal tidak valid!", parse_mode="Markdown")
-        return
+        return ConversationHandler.END
 
     if jumlah > user["saldo"]:
         await update.message.reply_text(
             f"❌ *Saldo tidak cukup!*\nSaldo: *{rp(user['saldo'])}*\nDibutuhkan: *{rp(jumlah)}*",
             parse_mode="Markdown"
         )
-        return
+        return ConversationHandler.END
 
-    saldo_lama = user["saldo"]
-    user["saldo"] -= jumlah
-    user["transaksi"].append({"tipe": "keluar", "keterangan": keterangan, "jumlah": jumlah, "waktu": datetime.now().isoformat(), "foto_id": None})
-    save_user(uid, user)
+    # Simpan sementara ke user_data, tunggu keputusan foto
+    context.user_data["ket"] = keterangan
+    context.user_data["jml"] = jumlah
 
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📷 Tambah Foto Bukti", callback_data="foto")],
+        [InlineKeyboardButton("✅ Simpan Tanpa Foto", callback_data="nofoto")],
+        [InlineKeyboardButton("❌ Batal", callback_data="batal")],
+    ])
     await update.message.reply_text(
-        f"✅ *Pengeluaran Dicatat!*\n\n"
-        f"📝 {keterangan}\n"
-        f"💸 -{rp(jumlah)}\n"
-        f"💰 Saldo lama: {rp(saldo_lama)}\n"
-        f"💵 *Saldo sekarang: {rp(user['saldo'])}*\n\n"
-        f"🕐 {waktu_sekarang()}",
-        parse_mode="Markdown"
+        f"🛒 *Ringkasan Pengeluaran*\n\n"
+        f"📝 Keterangan: *{keterangan}*\n"
+        f"💸 Jumlah: *{rp(jumlah)}*\n"
+        f"💰 Saldo sekarang: *{rp(user['saldo'])}*\n\n"
+        f"Mau tambah foto bukti?",
+        parse_mode="Markdown", reply_markup=keyboard
     )
+    return KELUAR_FOTO
+
+async def keluar_terima_foto(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Terima foto setelah user memilih 'Tambah Foto Bukti' dari /keluar"""
+    uid = update.effective_user.id
+    if update.message.photo:
+        foto_id = update.message.photo[-1].file_id
+        await simpan_keluar_msg(update.message, context, uid, foto_id)
+        return ConversationHandler.END
+    await update.message.reply_text("❌ Kirim foto dulu! Atau ketik /batal untuk membatalkan.")
+    return KELUAR_FOTO
 
 # ─── Catat Pengeluaran via Menu ───────────────────────────────────────────────
 async def catat_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -478,13 +492,24 @@ def main():
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("saldo", cek_saldo))
     app.add_handler(CommandHandler("addbal", addbal))
-    app.add_handler(CommandHandler("keluar", keluar_cmd))
     app.add_handler(CommandHandler("hari", transaksi_hari))
     app.add_handler(CommandHandler("bulanan", bulanan))
     app.add_handler(CommandHandler("semua", semua_transaksi))
     app.add_handler(CommandHandler("reset", reset_start))
     app.add_handler(CallbackQueryHandler(cb_reset, pattern="^reset_"))
-    app.add_handler(CallbackQueryHandler(cb_foto, pattern="^(foto|nofoto|batal)$"))
+
+    # ConversationHandler untuk /keluar (dengan opsi foto)
+    app.add_handler(ConversationHandler(
+        entry_points=[CommandHandler("keluar", keluar_cmd)],
+        states={
+            KELUAR_FOTO: [
+                MessageHandler(filters.PHOTO, keluar_terima_foto),
+                CallbackQueryHandler(cb_foto, pattern="^(foto|nofoto|batal)$"),
+            ],
+        },
+        fallbacks=[CommandHandler("batal", cancel)],
+        per_message=False,
+    ))
 
     app.add_handler(ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^➕ Tambah Saldo$"), tambah_saldo_menu)],
@@ -497,7 +522,10 @@ def main():
         states={
             INPUT_KET: [MessageHandler(filters.TEXT & ~filters.COMMAND, input_ket)],
             INPUT_JML: [MessageHandler(filters.TEXT & ~filters.COMMAND, input_jml)],
-            INPUT_FOTO: [MessageHandler(filters.PHOTO, terima_foto)],
+            INPUT_FOTO: [
+                MessageHandler(filters.PHOTO, terima_foto),
+                CallbackQueryHandler(cb_foto, pattern="^(foto|nofoto|batal)$"),
+            ],
         },
         fallbacks=[CommandHandler("batal", cancel)],
     ))
