@@ -52,7 +52,6 @@ def waktu_sekarang():
 
 # ─── Conversation states ─────────────────────────────────────────────────────
 SET_MODAL, INPUT_KET, INPUT_JML, INPUT_FOTO, KONFIRM_RESET, KELUAR_FOTO = range(6)
-# State baru untuk alur /keluar (foto dulu)
 WAIT_FOTO_KELUAR, WAIT_KET_KELUAR, WAIT_NOMINAL_KELUAR = range(6, 9)
 
 # ─── Keyboard ─────────────────────────────────────────────────────────────────
@@ -74,7 +73,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"💰 *Saldo kamu: {rp(user['saldo'])}*\n\n"
         f"*Perintah tersedia:*\n"
         f"• `/addbal 50000` — tambah saldo\n"
-        f"• `/keluar` — catat pengeluaran (dengan foto bukti dulu)\n"
+        f"• `/keluar 20000 beli sayur` — catat pengeluaran (langsung, tanpa foto)\n"
+        f"• `/keluar` — catat pengeluaran dengan foto bukti (foto dulu)\n"
         f"• `/saldo` — cek saldo\n"
         f"• `/hari` — transaksi hari ini\n"
         f"• `/bulanan` — laporan bulanan\n"
@@ -146,11 +146,52 @@ async def proses_tambah_saldo(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
     return ConversationHandler.END
 
-# ─── /keluar — alur baru: foto dulu, lalu keterangan, lalu nominal ────────────
+# ─── /keluar — Dua mode: dengan argumen (langsung) atau tanpa argumen (foto dulu) ──
 async def keluar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Mulai proses pengeluaran dengan meminta foto bukti terlebih dahulu"""
+    """Handler untuk /keluar. Jika ada argumen, langsung catat tanpa foto. Jika tidak, mulai alur foto."""
     uid = update.effective_user.id
     user = get_user(uid)
+    args = context.args
+
+    # MODE LANGSUNG (dengan argumen)
+    if args:
+        jumlah = parse_nominal(args[0])
+        if jumlah <= 0:
+            await update.message.reply_text("❌ Nominal tidak valid! Contoh: `/keluar 20000 beli sayur`", parse_mode="Markdown")
+            return ConversationHandler.END
+        
+        keterangan = " ".join(args[1:]) if len(args) > 1 else "Pengeluaran"
+        
+        if jumlah > user["saldo"]:
+            await update.message.reply_text(
+                f"❌ Saldo tidak cukup! Saldo: *{rp(user['saldo'])}*\nDibutuhkan: *{rp(jumlah)}*",
+                parse_mode="Markdown"
+            )
+            return ConversationHandler.END
+        
+        saldo_lama = user["saldo"]
+        user["saldo"] -= jumlah
+        user["transaksi"].append({
+            "tipe": "keluar",
+            "keterangan": keterangan,
+            "jumlah": jumlah,
+            "waktu": datetime.now().isoformat(),
+            "foto_id": None
+        })
+        save_user(uid, user)
+        
+        await update.message.reply_text(
+            f"✅ *Pengeluaran tersimpan!*\n\n"
+            f"📝 {keterangan}\n"
+            f"💸 -{rp(jumlah)}\n"
+            f"💰 Lama: {rp(saldo_lama)}\n"
+            f"💵 *Sekarang: {rp(user['saldo'])}*\n\n"
+            f"🕐 {waktu_sekarang()}",
+            parse_mode="Markdown", reply_markup=kb()
+        )
+        return ConversationHandler.END
+
+    # MODE FOTO (tanpa argumen)
     if user["saldo"] <= 0:
         await update.message.reply_text(
             f"❌ Saldo tidak mencukupi! Saldo: *{rp(user['saldo'])}*\nSilakan tambah saldo dulu.",
@@ -361,8 +402,9 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "`/addbal 50k` — tambah saldo 50 ribu\n"
         "`/saldo` — cek saldo sekarang\n\n"
         "💸 *PENGELUARAN*\n"
-        "`/keluar` — catat pengeluaran (foto dulu, lalu keterangan & nominal)\n"
-        "   → bisa kirim foto atau `/skip` jika tidak ada\n\n"
+        "`/keluar 20000 beli sayur` — catat pengeluaran langsung (tanpa foto)\n"
+        "`/keluar` — catat pengeluaran dengan foto bukti (foto dulu, lalu keterangan & nominal)\n"
+        "   → pada mode foto, bisa kirim foto atau `/skip` jika tidak ada\n\n"
         "📊 *LAPORAN*\n"
         "`/hari` — transaksi hari ini\n"
         "`/bulanan` — laporan per bulan\n"
@@ -623,7 +665,7 @@ def main():
     app.add_handler(CommandHandler("reset", reset_start))
     app.add_handler(CallbackQueryHandler(cb_reset, pattern="^reset_"))
 
-    # ConversationHandler untuk /keluar (alur baru: foto -> keterangan -> nominal)
+    # ConversationHandler untuk /keluar (dengan deteksi argumen di dalam fungsi)
     app.add_handler(ConversationHandler(
         entry_points=[CommandHandler("keluar", keluar_cmd)],
         states={
@@ -664,7 +706,7 @@ def main():
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
-    print("🤖 Bot Akuntansi v2 berjalan dengan alur /keluar (foto dulu)!")
+    print("🤖 Bot Akuntansi v2 berjalan dengan /keluar support dua mode (langsung & foto)!")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
