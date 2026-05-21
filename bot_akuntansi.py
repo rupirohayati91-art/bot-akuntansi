@@ -364,20 +364,42 @@ async def transaksi_hari(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     total_masuk = sum(t["jumlah"] for t in list_hari if t["tipe"] == "masuk")
     total_keluar = sum(t["jumlah"] for t in list_hari if t["tipe"] == "keluar")
+    jumlah_foto = sum(1 for t in list_hari if t.get("foto_id"))
     pesan = f"📋 *TRANSAKSI HARI INI*\n📅 {date.today().strftime('%d %B %Y')}\n\n"
 
     for i, t in enumerate(list_hari, 1):
         jam = datetime.fromisoformat(t["waktu"]).strftime("%H:%M")
         icon = "➕" if t["tipe"] == "masuk" else "💸"
-        foto = "📷" if t.get("foto_id") else ""
-        pesan += f"{i}. {icon} *{t['keterangan']}*\n"
-        pesan += f"    {rp(t['jumlah'])} | ⏰ {jam} {foto}\n\n"
+        foto = " 📷" if t.get("foto_id") else ""
+        pesan += f"{i}. {icon} *{t['keterangan']}*{foto}\n"
+        pesan += f"    {rp(t['jumlah'])} | ⏰ {jam}\n\n"
 
     pesan += f"━━━━━━━━━━\n"
     pesan += f"➕ Masuk: *{rp(total_masuk)}*\n"
     pesan += f"💸 Keluar: *{rp(total_keluar)}*\n"
     pesan += f"💰 *Saldo: {rp(user['saldo'])}*"
+    if jumlah_foto > 0:
+        pesan += f"\n\n📷 Menampilkan *{jumlah_foto} foto bukti* di bawah..."
     await update.message.reply_text(pesan, parse_mode="Markdown")
+
+    # Kirim foto bukti satu per satu dengan caption detail
+    for i, t in enumerate(list_hari, 1):
+        if not t.get("foto_id"):
+            continue
+        jam = datetime.fromisoformat(t["waktu"]).strftime("%H:%M")
+        caption = (
+            f"📷 *Bukti #{i} — {t['keterangan']}*\n"
+            f"💸 {rp(t['jumlah'])}\n"
+            f"⏰ {jam}"
+        )
+        try:
+            await update.message.reply_photo(
+                photo=t["foto_id"],
+                caption=caption,
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            logger.warning(f"Gagal kirim foto: {e}")
 
 # ─── /bulanan — Laporan Bulanan ───────────────────────────────────────────────
 async def bulanan(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -388,26 +410,64 @@ async def bulanan(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("📅 Belum ada transaksi.", parse_mode="Markdown")
         return
 
-    per_bulan = defaultdict(lambda: {"masuk": 0, "keluar": 0, "jumlah": 0})
+    # Kelompokkan transaksi per bulan
+    per_bulan = defaultdict(list)
     for t in user["transaksi"]:
         bulan = t["waktu"][:7]  # YYYY-MM
-        per_bulan[bulan][t["tipe"]] += t["jumlah"]
-        per_bulan[bulan]["jumlah"] += 1
+        per_bulan[bulan].append(t)
 
-    pesan = f"📅 *LAPORAN BULANAN*\n\n"
     for bulan in sorted(per_bulan.keys(), reverse=True):
+        transaksi_bln = per_bulan[bulan]
         try:
             label = datetime.strptime(bulan, "%Y-%m").strftime("%B %Y")
         except:
             label = bulan
-        data_bln = per_bulan[bulan]
-        pesan += f"📆 *{label}*\n"
-        pesan += f"   ➕ Masuk: {rp(data_bln['masuk'])}\n"
-        pesan += f"   💸 Keluar: {rp(data_bln['keluar'])}\n"
-        pesan += f"   🔢 Transaksi: {data_bln['jumlah']}x\n\n"
 
-    pesan += f"━━━━━━━━━━\n💰 *Saldo Sekarang: {rp(user['saldo'])}*"
-    await update.message.reply_text(pesan, parse_mode="Markdown")
+        total_masuk = sum(t["jumlah"] for t in transaksi_bln if t["tipe"] == "masuk")
+        total_keluar = sum(t["jumlah"] for t in transaksi_bln if t["tipe"] == "keluar")
+        jumlah_foto = sum(1 for t in transaksi_bln if t.get("foto_id"))
+
+        # Teks ringkasan bulan
+        pesan = f"📆 *LAPORAN {label.upper()}*\n\n"
+        for i, t in enumerate(transaksi_bln, 1):
+            dt = datetime.fromisoformat(t["waktu"])
+            icon = "➕" if t["tipe"] == "masuk" else "💸"
+            foto_tag = " 📷" if t.get("foto_id") else ""
+            pesan += f"{i}. {icon} *{t['keterangan']}*{foto_tag}\n"
+            pesan += f"    {rp(t['jumlah'])} | {dt.strftime('%d/%m %H:%M')}\n\n"
+
+        pesan += f"━━━━━━━━━━\n"
+        pesan += f"➕ Total Masuk: *{rp(total_masuk)}*\n"
+        pesan += f"💸 Total Keluar: *{rp(total_keluar)}*\n"
+        pesan += f"🔢 Transaksi: *{len(transaksi_bln)}x*"
+        if jumlah_foto > 0:
+            pesan += f"\n📷 *{jumlah_foto} foto bukti* di bawah"
+        await update.message.reply_text(pesan, parse_mode="Markdown")
+
+        # Kirim foto bukti bulan ini satu per satu
+        for i, t in enumerate(transaksi_bln, 1):
+            if not t.get("foto_id"):
+                continue
+            dt = datetime.fromisoformat(t["waktu"])
+            caption = (
+                f"📷 *Bukti — {t['keterangan']}*\n"
+                f"💸 {rp(t['jumlah'])}\n"
+                f"📅 {dt.strftime('%d %B %Y, %H:%M')}"
+            )
+            try:
+                await update.message.reply_photo(
+                    photo=t["foto_id"],
+                    caption=caption,
+                    parse_mode="Markdown"
+                )
+            except Exception as e:
+                logger.warning(f"Gagal kirim foto: {e}")
+
+    # Ringkasan total akhir
+    await update.message.reply_text(
+        f"━━━━━━━━━━\n💰 *Saldo Sekarang: {rp(user['saldo'])}*",
+        parse_mode="Markdown"
+    )
 
 # ─── /semua — Semua Transaksi ─────────────────────────────────────────────────
 async def semua_transaksi(update: Update, context: ContextTypes.DEFAULT_TYPE):
